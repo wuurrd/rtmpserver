@@ -37,10 +37,12 @@ struct Client {
 	int fd;
 	bool playing; /* Wants to receive the stream? */
 	bool ready; /* Wants to receive and seen a keyframe */
+    bool publisher; /* Is this a publisher */
 	RTMP_Message messages[64];
     std::string path;
 	std::string buf;
 	std::string send_queue;
+    amf_object_t metadata;
 	size_t chunk_len;
 	uint32_t written_seq;
 	uint32_t read_seq;
@@ -48,7 +50,6 @@ struct Client {
 
 namespace {
 
-amf_object_t metadata;
 std::map<std::string, Client *> publishers;
 int listen_fd;
 std::vector<pollfd> poll_table;
@@ -271,6 +272,7 @@ void handle_createstream(Client *client, double txid, Decoder *dec)
 void handle_publish(Client *client, double txid, Decoder *dec)
 {
 	amf_load(dec); /* NULL */
+    client->publisher = true;
 
 	std::string path = amf_load_string(dec);
 	debug("publish %s\n", path.c_str());
@@ -331,7 +333,7 @@ void start_playback(Client *client)
 	if (publisher != publishers.end()) {
 		Encoder notify;
 		amf_write(&notify, std::string("onMetaData"));
-		amf_write_ecma(&notify, metadata);
+		amf_write_ecma(&notify, (*publisher).second->metadata);
 		rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify.buf);
 	}
 }
@@ -394,7 +396,7 @@ void handle_pause(Client *client, double txid, Decoder *dec)
 
 void handle_setdataframe(Client *client, Decoder *dec)
 {
-	if (publishers.find(client->path) == publishers.end()) {
+	if (!client->publisher) {
 		throw std::runtime_error("not a publisher");
 	}
 
@@ -403,16 +405,16 @@ void handle_setdataframe(Client *client, Decoder *dec)
 		throw std::runtime_error("can only set metadata");
 	}
 
-	metadata = amf_load_ecma(dec);
+	client->metadata = amf_load_ecma(dec);
 
 	Encoder notify;
 	amf_write(&notify, std::string("onMetaData"));
-	amf_write_ecma(&notify, metadata);
+	amf_write_ecma(&notify, client->metadata);
 
 	FOR_EACH(std::vector<Client *>, i, clients) {
-		Client *client = *i;
-		if (client != NULL && client->playing) {
-			rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify.buf);
+		Client *client2 = *i;
+		if (client2 != NULL && client2->playing && client2->path == client->path) {
+			rtmp_send(client2, MSG_NOTIFY, STREAM_ID, notify.buf);
 		}
 	}
 }
@@ -507,12 +509,12 @@ void handle_message(Client *client, RTMP_Message *msg)
 		break;
 
 	case MSG_AUDIO:
-		if (publishers.find(client->path) != publishers.end()) {
+		if (!client->publisher) {
 			throw std::runtime_error("not a publisher");
 		}
 		FOR_EACH(std::vector<Client *>, i, clients) {
 			Client *receiver = *i;
-			if (receiver != NULL && receiver->ready && receiver->path == client->path) {
+			if (receiver != NULL && receiver->ready && receiver->path == client->path && !receiver->publisher) {
 				rtmp_send(receiver, MSG_AUDIO, STREAM_ID,
 					  msg->buf, msg->timestamp);
 			}
@@ -520,13 +522,13 @@ void handle_message(Client *client, RTMP_Message *msg)
 		break;
 
 	case MSG_VIDEO: {
-		if (publishers.find(client->path) != publishers.end()) {
+		if (!client->publisher) {
 			throw std::runtime_error("not a publisher");
 		}
 		uint8_t flags = msg->buf[0];
 		FOR_EACH(std::vector<Client *>, i, clients) {
 			Client *receiver = *i;
-			if (receiver != NULL && receiver->playing && receiver->path == client->path) {
+			if (receiver != NULL && receiver->playing && receiver->path == client->path && !receiver->publisher) {
 				if (flags >> 4 == FLV_KEY_FRAME &&
 				    !receiver->ready) {
 					std::string control;
@@ -685,6 +687,7 @@ Client *new_client()
 
 	Client *client = new Client;
 	client->playing = false;
+    client->publisher = false;
 	client->ready = false;
 	client->fd = fd;
 	client->written_seq = 0;
@@ -726,9 +729,9 @@ void close_client(Client *client, size_t i)
 		printf("publisher disconnected.\n");
         publishers.erase(publishers.find(client->path));
 		FOR_EACH(std::vector<Client *>, i, clients) {
-			Client *client = *i;
-			if (client != NULL) {
-				client->ready = false;
+			Client *client2 = *i;
+			if (client2 != NULL && client2->path == client->path) {
+				client2->ready = false;
 			}
 		}
 	}
