@@ -272,10 +272,11 @@ void handle_createstream(Client *client, double txid, Decoder *dec)
 void handle_publish(Client *client, double txid, Decoder *dec)
 {
 	amf_load(dec); /* NULL */
-    client->publisher = true;
-
 	std::string path = amf_load_string(dec);
 	debug("publish %s\n", path.c_str());
+
+    client->publisher = true;
+    client->path = path;
 
 	amf_object_t status;
 	status.insert(std::make_pair("level", std::string("status")));
