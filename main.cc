@@ -336,7 +336,11 @@ void start_playback(Client *client)
 		amf_write(&notify, std::string("onMetaData"));
 		amf_write_ecma(&notify, (*publisher).second->metadata);
 		rtmp_send(client, MSG_NOTIFY, STREAM_ID, notify.buf);
+        debug("------------------------------> Publisher for %s found\n", client->path.c_str());
 	}
+    else {
+        debug("------------------------------> No publisher for %s found\n", client->path.c_str());
+    }
 }
 
 void handle_play(Client *client, double txid, Decoder *dec)
@@ -434,7 +438,9 @@ void handle_invoke(Client *client, const RTMP_Message *msg, Decoder *dec)
 			handle_fcpublish(client, txid, dec);
 		} else if (method == "createStream") {
 			handle_createstream(client, txid, dec);
-		}
+		} else {
+            debug("Unhandled message %s", method.c_str());
+        }
 
 	} else if (msg->endpoint == STREAM_ID) {
 		if (method == "publish") {
@@ -445,7 +451,9 @@ void handle_invoke(Client *client, const RTMP_Message *msg, Decoder *dec)
 			handle_play2(client, txid, dec);
 		} else if (method == "pause") {
 			handle_pause(client, txid, dec);
-		}
+		} else {
+            debug("Unhandled message %s", method.c_str());
+        }
 	}
 }
 
@@ -815,6 +823,7 @@ try {
 	poll_table.push_back(entry);
 	clients.push_back(NULL);
 
+	debug("ready\n");
 	for (;;) {
 		do_poll();
 	}
